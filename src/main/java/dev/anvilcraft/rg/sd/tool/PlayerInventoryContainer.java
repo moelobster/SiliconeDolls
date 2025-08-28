@@ -1,8 +1,9 @@
-package dev.anvilcraft.rg.sd.util;
+package dev.anvilcraft.rg.sd.tool;
 
 import com.google.common.collect.ImmutableList;
 import dev.anvilcraft.rg.api.server.TranslationUtil;
 import dev.anvilcraft.rg.sd.entity.PlayerActionPack;
+import dev.anvilcraft.rg.sd.util.IServerPlayerInjector;
 import dev.anvilcraft.rg.tools.chest.menu.control.AutoResetButton;
 import dev.anvilcraft.rg.tools.chest.menu.control.Button;
 import dev.anvilcraft.rg.tools.chest.menu.control.RadioList;
@@ -19,7 +20,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.function.BiConsumer;
 
-public class FakePlayerInventoryContainer extends FakePlayerContainer {
+public class PlayerInventoryContainer extends PlayerContainer {
     public final NonNullList<ItemStack> items;
     public final NonNullList<ItemStack> armor;
     public final NonNullList<ItemStack> offhand;
@@ -27,16 +28,35 @@ public class FakePlayerInventoryContainer extends FakePlayerContainer {
     private final List<NonNullList<ItemStack>> compartments;
     private final PlayerActionPack ap;
     private final RadioList hotbar;
+    @SuppressWarnings("FieldCanBeLocal")
+    private final Button stopAll;
+    private final Button attackInterval12;
+    private final Button attackContinuous;
+    private final Button useContinuous;
 
-    public FakePlayerInventoryContainer(Player player) {
+    public PlayerInventoryContainer(Player player) {
         super(player);
         this.items = this.player.getInventory().items;
         this.armor = this.player.getInventory().armor;
         this.offhand = this.player.getInventory().offhand;
         this.ap = ((IServerPlayerInjector) this.player).getActionPack();
         this.compartments = ImmutableList.of(this.items, this.armor, this.offhand, this.buttons);
-        this.hotbar = FakePlayerInventoryContainer.createHotbarButton(this::addButton, this.ap);
-        this.createButton();
+        this.hotbar = PlayerInventoryContainer.createHotbarButton(this::addButton, this.ap);
+        this.stopAll = new AutoResetButton("silicone_dolls.button.action.stop_all")
+            .addTurnOnFunction(this.ap::stopAll);
+        this.attackInterval12 = new Button(false, "silicone_dolls.button.action.attack_interval_12")
+            .addTurnOnFunction(() -> this.ap.start(PlayerActionPack.ActionType.ATTACK, PlayerActionPack.Action.interval(12)))
+            .addTurnOffFunction(() -> this.ap.start(PlayerActionPack.ActionType.ATTACK, PlayerActionPack.Action.once()));
+        this.attackContinuous = new Button(false, "silicone_dolls.button.action.attack_continuous")
+            .addTurnOnFunction(() -> this.ap.start(PlayerActionPack.ActionType.ATTACK, PlayerActionPack.Action.continuous()))
+            .addTurnOffFunction(() -> this.ap.start(PlayerActionPack.ActionType.ATTACK, PlayerActionPack.Action.once()));
+        this.useContinuous = new Button(false, "silicone_dolls.button.action.use_continuous")
+            .addTurnOnFunction(() -> this.ap.start(PlayerActionPack.ActionType.USE, PlayerActionPack.Action.continuous()))
+            .addTurnOffFunction(() -> this.ap.start(PlayerActionPack.ActionType.USE, PlayerActionPack.Action.once()));
+        this.addButton(0, this.stopAll);
+        this.addButton(5, this.attackInterval12);
+        this.addButton(6, this.attackContinuous);
+        this.addButton(8, this.useContinuous);
     }
 
     @Override
@@ -108,43 +128,14 @@ public class FakePlayerInventoryContainer extends FakePlayerContainer {
         return new RadioList(hotBarList, true);
     }
 
-    private void createButton() {
-        Button stopAll = new AutoResetButton("silicone_dolls.button.action.stop_all");
-        Button attackInterval12 = new Button(false, "silicone_dolls.button.action.attack_interval_12");
-        Button attackContinuous = new Button(false, "silicone_dolls.button.action.attack_continuous");
-        Button useContinuous = new Button(false, "silicone_dolls.button.action.use_continuous");
-
-        stopAll.addTurnOnFunction(() -> {
-            attackInterval12.turnOffWithoutFunction();
-            attackContinuous.turnOffWithoutFunction();
-            useContinuous.turnOffWithoutFunction();
-            ap.stopAll();
-        });
-
-        attackInterval12.addTurnOnFunction(() -> {
-            ap.start(PlayerActionPack.ActionType.ATTACK, PlayerActionPack.Action.interval(12));
-            attackContinuous.turnOffWithoutFunction();
-        });
-        attackInterval12.addTurnOffFunction(() -> ap.start(PlayerActionPack.ActionType.ATTACK, PlayerActionPack.Action.once()));
-
-        attackContinuous.addTurnOnFunction(() -> {
-            ap.start(PlayerActionPack.ActionType.ATTACK, PlayerActionPack.Action.continuous());
-            attackInterval12.turnOffWithoutFunction();
-        });
-        attackContinuous.addTurnOffFunction(() -> ap.start(PlayerActionPack.ActionType.ATTACK, PlayerActionPack.Action.once()));
-
-        useContinuous.addTurnOnFunction(() -> ap.start(PlayerActionPack.ActionType.USE, PlayerActionPack.Action.continuous()));
-        useContinuous.addTurnOffFunction(() -> ap.start(PlayerActionPack.ActionType.USE, PlayerActionPack.Action.once()));
-
-        this.addButton(0, stopAll);
-        this.addButton(5, attackInterval12);
-        this.addButton(6, attackContinuous);
-        this.addButton(8, useContinuous);
-    }
-
     @Override
     public void startOpen(@NotNull Player player) {
         super.startOpen(player);
+    }
+
+    @Override
+    public void tick() {
+        super.tick();
         List<Button> buttonList = this.hotbar.getButtons();
         for (int i = 0; i < buttonList.size(); i++) {
             if (i == this.player.getInventory().selected) {
@@ -152,6 +143,24 @@ public class FakePlayerInventoryContainer extends FakePlayerContainer {
             } else {
                 buttonList.get(i).turnOffWithoutFunction();
             }
+        }
+        Map<PlayerActionPack.ActionType, PlayerActionPack.Action> actions = this.ap.getActions();
+        PlayerActionPack.Action attack = actions.get(PlayerActionPack.ActionType.ATTACK);
+        if (attack != null && attack.interval == 12 && !attack.isContinuous && !attack.done) {
+            this.attackInterval12.turnOnWithoutFunction();
+        } else {
+            this.attackInterval12.turnOffWithoutFunction();
+        }
+        if (attack != null && attack.interval == 1 && attack.isContinuous && !attack.done) {
+            this.attackContinuous.turnOnWithoutFunction();
+        } else {
+            this.attackContinuous.turnOffWithoutFunction();
+        }
+        PlayerActionPack.Action use = actions.get(PlayerActionPack.ActionType.USE);
+        if (use != null && use.interval == 1 && use.isContinuous && !use.done) {
+            this.useContinuous.turnOnWithoutFunction();
+        } else {
+            this.useContinuous.turnOffWithoutFunction();
         }
     }
 }
